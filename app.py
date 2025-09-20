@@ -52,6 +52,30 @@ class Trip(db.Model):
     items = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
+# app.py
+import os
+import json
+# ... (all other imports are the same)
+
+# ... (app, CORS, DB Config, AI Config are all the same) ...
+db = SQLAlchemy(app)
+
+# --- Database Models (no changes) ---
+class User(db.Model):
+    # ... (no changes)
+class Trip(db.Model):
+    # ... (no changes)
+
+# --- NEW: A command to create the database tables ---
+@app.cli.command("create-db")
+def create_db():
+    """Creates the database tables."""
+    db.create_all()
+    print("Database tables created!")
+
+# --- The rest of your app.py file is EXACTLY the same ---
+# ... (get_amadeus_token, all API endpoints, etc.) ...
+
 # --- Token Verification Decorator ---
 def token_required(f):
     @wraps(f)
