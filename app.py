@@ -26,7 +26,12 @@ DB_NAME = os.getenv("DB_NAME")
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# Use Render's DATABASE_URL if available, otherwise use local config
+if os.getenv("DATABASE_URL"):
+    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv("DATABASE_URL").replace("postgres://", "postgresql://", 1)
+else:
+    app.config['SQLALCHEMY_DATABASE_URI'] = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
@@ -52,29 +57,12 @@ class Trip(db.Model):
     items = db.Column(db.Text, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
 
-# app.py
-import os
-import json
-# ... (all other imports are the same)
-
-# ... (app, CORS, DB Config, AI Config are all the same) ...
-db = SQLAlchemy(app)
-
-# --- Database Models (no changes) ---
-class User(db.Model):
-    # ... (no changes)
-class Trip(db.Model):
-    # ... (no changes)
-
-# --- NEW: A command to create the database tables ---
+# --- A command to create the database tables ---
 @app.cli.command("create-db")
 def create_db():
     """Creates the database tables."""
     db.create_all()
     print("Database tables created!")
-
-# --- The rest of your app.py file is EXACTLY the same ---
-# ... (get_amadeus_token, all API endpoints, etc.) ...
 
 # --- Token Verification Decorator ---
 def token_required(f):
@@ -144,15 +132,51 @@ def login():
 # --- Search Endpoints ---
 @app.route("/api/search-flights")
 def search_flights():
-    # ... (code is complete and correct)
-    return #...
+    token = get_amadeus_token()
+    if not token:
+        return jsonify({"error": "Could not authenticate with Amadeus"}), 500
+    origin = request.args.get('origin')
+    destination = request.args.get('destination')
+    departure_date = request.args.get('departureDate')
+    if not all([origin, destination, departure_date]):
+        return jsonify({"error": "Missing required search parameters"}), 400
+    flight_url = "https://test.api.amadeus.com/v2/shopping/flight-offers"
+    params = {"originLocationCode": origin, "destinationLocationCode": destination, "departureDate": departure_date, "adults": 1, "nonStop": "true", "max": 5}
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        res = requests.get(flight_url, headers=headers, params=params)
+        res.raise_for_status()
+        return jsonify(res.json())
+    except requests.exceptions.HTTPError as e:
+        error_details = e.response.json()
+        return jsonify({"error": "Amadeus API Error", "details": error_details}), e.response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Network Error", "details": str(e)}), 500
 
 @app.route("/api/search-hotels")
 def search_hotels():
-    # ... (code is complete and correct)
-    return #...
+    token = get_amadeus_token()
+    if not token:
+        return jsonify({"error": "Could not authenticate with Amadeus"}), 500
+    city_code = request.args.get('cityCode')
+    check_in_date = request.args.get('checkInDate')
+    check_out_date = request.args.get('checkOutDate')
+    if not all([city_code, check_in_date, check_out_date]):
+        return jsonify({"error": "Missing required search parameters"}), 400
+    hotel_url = "https://test.api.amadeus.com/v1/reference-data/locations/hotels/by-city"
+    params = {"cityCode": city_code, "checkInDate": check_in_date, "checkOutDate": check_out_date}
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        res = requests.get(hotel_url, headers=headers, params=params)
+        res.raise_for_status()
+        return jsonify(res.json())
+    except requests.exceptions.HTTPError as e:
+        error_details = e.response.json()
+        return jsonify({"error": "Amadeus API Error", "details": error_details}), e.response.status_code
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": "Network Error", "details": str(e)}), 500
 
-# --- UPDATED: Trip Endpoints to be User-Specific ---
+# --- User-Specific Trip Endpoints ---
 @app.route("/api/trip", methods=['POST'])
 @token_required
 def save_trip(current_user):
@@ -168,7 +192,6 @@ def save_trip(current_user):
         user_trip.items = json.dumps(trip_items)
         
     db.session.commit()
-    
     return jsonify({"message": "Trip saved successfully!"})
 
 @app.route("/api/trip", methods=['GET'])
@@ -180,7 +203,6 @@ def load_trip(current_user):
     else:
         return jsonify({"tripData": []})
 
-# --- AI Itinerary Endpoint (now requires token) ---
 @app.route("/api/generate-itinerary", methods=['POST'])
 @token_required
 def generate_itinerary(current_user):
@@ -189,9 +211,16 @@ def generate_itinerary(current_user):
         return jsonify({"error": "No trip data provided"}), 400
 
     prompt = f"""
-    You are a helpful travel assistant...
-    """ # ... (prompt content is the same)
-    
+    You are a helpful travel assistant. Based on the following travel components:
+    {json.dumps(trip_data, indent=2)}
+
+    Please create a suggested, creative, day-by-day itinerary.
+    The user has booked these items, so the plan should revolve around them.
+    Suggest nearby attractions, local restaurants, and transportation tips.
+    Format your entire response as a single block of clean HTML.
+    Use headings (h3, h4), paragraphs (p), lists (ul, li), and bold tags (b) to make it readable.
+    Do not include `<html>` or `<body>` tags.
+    """
     try:
         response = model.generate_content(prompt)
         return jsonify({"itinerary_html": response.text})
