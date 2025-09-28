@@ -96,11 +96,16 @@ def register():
 
 @app.route('/api/login', methods=['POST'])
 def login():
+    print("--- LOGIN ENDPOINT HIT ---")
     auth = request.get_json()
-    if not auth or not auth.get('username') or not auth.get('password'): return jsonify({'message': 'Could not verify'}), 401
+    if not auth or not auth.get('username') or not auth.get('password'): 
+        return jsonify({'message': 'Could not verify'}), 401
     user = User.query.filter_by(username=auth['username']).first()
-    if not user or not user.check_password(auth['password']): return jsonify({'message': 'Could not verify'}), 401
+    if not user or not user.check_password(auth['password']): 
+        print("--- LOGIN FAILED: Invalid credentials ---")
+        return jsonify({'message': 'Invalid username or password'}), 401
     token = jwt.encode({'id': user.id, 'exp': datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=24)}, app.config['SECRET_KEY'], algorithm="HS256")
+    print("--- LOGIN SUCCESSFUL: Token generated ---")
     return jsonify({'token': token})
 
 @app.route("/api/search-flights")
@@ -220,7 +225,12 @@ def generate_itinerary(current_user):
     You are a helpful travel assistant. Based on the following travel components:
     {json.dumps(trip_data, indent=2)}
 
-    Please create a suggested, creative, day-by-day itinerary...
+    Please create a suggested, creative, day-by-day itinerary.
+    The user has booked these items, so the plan should revolve around them.
+    Suggest nearby attractions, local restaurants, and transportation tips.
+    Format your entire response as a single block of clean HTML.
+    Use headings (h3, h4), paragraphs (p), lists (ul, li), and bold tags (b) to make it readable.
+    Do not include `<html>` or `<body>` tags.
     """
     try:
         response = model.generate_content(prompt)
@@ -231,3 +241,4 @@ def generate_itinerary(current_user):
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
+
